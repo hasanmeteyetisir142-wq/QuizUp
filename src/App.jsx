@@ -95,9 +95,11 @@ export default function App() {
     setNotice('')
     let timeoutId
     try {
-      const fn = authMode === 'signup' ? supabase.auth.signUp : supabase.auth.signInWithPassword
+      const authRequest = authMode === 'signup'
+        ? supabase.auth.signUp({ email: email.trim(), password })
+        : supabase.auth.signInWithPassword({ email: email.trim(), password })
       const result = await Promise.race([
-        fn({ email: email.trim(), password }),
+        authRequest,
         new Promise((_, reject) => {
           timeoutId = setTimeout(() => reject(new Error('Supabase bağlantısı 20 saniyede yanıt vermedi. Sayfayı yenileyip tekrar dene.')), 20000)
         })
