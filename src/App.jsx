@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowRight, BookOpen, Check, Crown, GraduationCap, LogOut, Plus, Radio, RefreshCw, Trophy, Users, X, Zap } from 'lucide-react'
 import { supabase } from './lib/supabase'
 
@@ -27,6 +27,7 @@ export default function App() {
   const [answerFeedback, setAnswerFeedback] = useState(null)
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState('')
+  const roomChannel = useRef(null)
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session))
@@ -68,13 +69,23 @@ export default function App() {
       .on('broadcast', { event: 'sync' }, () => {
         if (participant) loadStudentRoom(room, participant)
         else loadTeacherRoom(room.id)
-      }).subscribe()
-    return () => { supabase.removeChannel(channel) }
+      }).subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          roomChannel.current = channel
+          channel.send({ type: 'broadcast', event: 'sync', payload: { kind: 'connected' } })
+        }
+      })
+    return () => { roomChannel.current = null; supabase.removeChannel(channel) }
   }, [room?.id, participant?.participant_id])
 
+  useEffect(() => {
+    setSelected(null)
+    setAnswerFeedback(null)
+  }, [snapshot?.current_question])
+
   const broadcast = async () => {
-    if (!room?.id) return
-    await supabase.channel('quizup-room-' + room.id).send({ type: 'broadcast', event: 'sync', payload: { at: Date.now() } })
+    if (!room?.id || !roomChannel.current) return
+    await roomChannel.current.send({ type: 'broadcast', event: 'sync', payload: { at: Date.now() } })
   }
 
   const signIn = async (event) => {
