@@ -89,13 +89,33 @@ export default function App() {
   }
 
   const signIn = async (event) => {
-    event.preventDefault(); setBusy(true); setNotice('')
-    const fn = authMode === 'signup' ? supabase.auth.signUp : supabase.auth.signInWithPassword
-    const { data, error } = await fn({ email: email.trim(), password })
-    setBusy(false)
-    if (error) return setNotice(errText(error))
-    if (authMode === 'signup' && !data.session) setNotice('Hesap oluşturuldu. E-postana gelen doğrulama bağlantısına tıkla, sonra giriş yap.')
-    else { setSession(data.session); setPage('teacher') }
+    event.preventDefault()
+    if (busy) return
+    setBusy(true)
+    setNotice('')
+    let timeoutId
+    try {
+      const fn = authMode === 'signup' ? supabase.auth.signUp : supabase.auth.signInWithPassword
+      const result = await Promise.race([
+        fn({ email: email.trim(), password }),
+        new Promise((_, reject) => {
+          timeoutId = setTimeout(() => reject(new Error('Supabase bağlantısı 20 saniyede yanıt vermedi. Sayfayı yenileyip tekrar dene.')), 20000)
+        })
+      ])
+      if (result.error) {
+        setNotice(errText(result.error))
+      } else if (authMode === 'signup' && !result.data.session) {
+        setNotice('Hesap oluşturma isteği tamamlandı. E-postana gelen doğrulama bağlantısına tıkla, sonra giriş yap.')
+      } else {
+        setSession(result.data.session)
+        setPage('teacher')
+      }
+    } catch (error) {
+      setNotice(errText(error))
+    } finally {
+      clearTimeout(timeoutId)
+      setBusy(false)
+    }
   }
 
   const saveQuiz = async (event) => {
