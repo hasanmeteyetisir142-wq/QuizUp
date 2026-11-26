@@ -64,12 +64,16 @@ export default function App() {
   const [questionIndex, setQuestionIndex] = useState(0)
   const [selected, setSelected] = useState(null)
   const [answers, setAnswers] = useState([])
+  const [gameMode, setGameMode] = useState('classic')
+  const [secondsLeft, setSecondsLeft] = useState(0)
+  const [category, setCategory] = useState('Tümü')
   const [editor, setEditor] = useState({ title: '', category: 'Genel kültür', questions: [{ text: '', options: ['', '', '', ''], answer: 0, seconds: 20 }] })
   const [pin, setPin] = useState('')
   const [notice, setNotice] = useState('')
   useEffect(() => localStorage.setItem('quizup-quizzes', JSON.stringify(quizzes)), [quizzes])
   const allQuizzes = useMemo(() => [...starter, ...quizzes], [quizzes])
-  const filtered = allQuizzes.filter(q => q.title.toLocaleLowerCase('tr').includes(search.toLocaleLowerCase('tr')) || q.category.toLocaleLowerCase('tr').includes(search.toLocaleLowerCase('tr')))
+  const filtered = allQuizzes.filter(q => (category === 'Tümü' || q.category === category) && (q.title.toLocaleLowerCase('tr').includes(search.toLocaleLowerCase('tr')) || q.category.toLocaleLowerCase('tr').includes(search.toLocaleLowerCase('tr'))))
+  const categories = ['Tümü', ...new Set(allQuizzes.map(q => q.category))]
   const go = p => { setPage(p); setNotice(''); window.scrollTo({ top: 0, behavior: 'smooth' }) }
   const updateQuestion = (idx, key, value) => setEditor(old => ({ ...old, questions: old.questions.map((q, i) => i === idx ? { ...q, [key]: value } : q) }))
   const updateOption = (qi, oi, value) => setEditor(old => ({ ...old, questions: old.questions.map((q, i) => i === qi ? { ...q, options: q.options.map((o, j) => j === oi ? value : o) } : q) }))
@@ -81,15 +85,17 @@ export default function App() {
     setNotice('Yarışma bu tarayıcıya kaydedildi. Herkese açık yayınlama için hesap ve çevrim içi veritabanı bağlantısı sonraki aşamada eklenecek.')
     setPage('my')
   }
-  const startQuiz = quiz => { setActiveQuiz(quiz); setQuestionIndex(0); setAnswers([]); setSelected(null); go('play') }
+  const startQuiz = quiz => { setActiveQuiz(quiz); setQuestionIndex(0); setAnswers([]); setSelected(null); go('modes') }
+  const launchMode = mode => { setGameMode(mode); setQuestionIndex(0); setAnswers([]); setSelected(null); setSecondsLeft(mode === 'rush' ? Math.min(activeQuiz.questions[0]?.seconds || 10, 10) : (activeQuiz.questions[0]?.seconds || 20)); setPage('play'); window.scrollTo({top:0,behavior:'smooth'}) }
+  const advance = next => { setAnswers(next); setSelected(null); if (questionIndex + 1 >= activeQuiz.questions.length) go('result'); else { const i = questionIndex + 1; setQuestionIndex(i); setSecondsLeft(gameMode === 'rush' ? Math.min(activeQuiz.questions[i]?.seconds || 10, 10) : (activeQuiz.questions[i]?.seconds || 20)) } }
   const answerQuestion = () => {
     if (selected === null) return
-    const next = [...answers, selected]
-    setAnswers(next); setSelected(null)
-    if (questionIndex + 1 >= activeQuiz.questions.length) go('result')
-    else setQuestionIndex(i => i + 1)
+    advance([...answers, selected])
   }
-  const score = activeQuiz ? activeQuiz.questions.reduce((n, q, i) => n + (answers[i] === q.answer ? 1 : 0), 0) : 0
+  const correctCount = activeQuiz ? activeQuiz.questions.reduce((n,q,i)=>n+(answers[i]===q.answer?1:0),0) : 0
+  const score = correctCount * (gameMode === 'accuracy' || gameMode === 'practice' ? 100 : 100)
+  useEffect(() => { if (page !== 'play' || gameMode === 'practice') return; const timer = setInterval(() => setSecondsLeft(v => Math.max(0,v-1)), 1000); return () => clearInterval(timer) }, [page,questionIndex,gameMode])
+  useEffect(() => { if (page === 'play' && gameMode !== 'practice' && secondsLeft === 0) advance([...answers, -1]) }, [secondsLeft])
   const NavButton = ({ icon: Icon, label, target, active }) => <button className={'nav-item ' + (active ? 'active' : '')} onClick={() => go(target)}><Icon size={18}/><span>{label}</span></button>
   return <div className="app-shell">
     <header className="topbar"><button className="brand" onClick={() => go('home')}><span className="brand-mark"><Zap size={21} fill="currentColor"/></span><span>quiz<span className="brand-light">up</span><i>.</i></span></button>
