@@ -1,74 +1,191 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, ArrowRight, BookOpen, Check, ChevronDown, CircleHelp, Clock3, Compass, Crown, Gamepad2, GraduationCap, Home, Layers3, LockKeyhole, Plus, Search, Share2, Sparkles, Trophy, Users, X, Zap } from 'lucide-react'
+import { ArrowRight, BookOpen, Check, Crown, GraduationCap, LogOut, Plus, Radio, RefreshCw, Trophy, Users, X, Zap } from 'lucide-react'
+import { supabase } from './lib/supabase'
 
-const starter = []
-const colors = ['#7357f6', '#18a999', '#ffad42', '#ed6684']
-const loadQuizzes = () => { try { return JSON.parse(localStorage.getItem('quizup-quizzes') || '[]') } catch { return [] } }
+const emptyQuestion = () => ({ prompt: '', options: ['', '', '', ''], correct_index: 0, seconds: 20 })
+const errText = (error) => error?.message?.replace('Failed to fetch', 'Bağlantı kurulamadı. İnternetini kontrol et.') || 'Bir hata oluştu.'
+const medal = ['🥇', '🥈', '🥉']
 
 export default function App() {
+  const [session, setSession] = useState(null)
   const [page, setPage] = useState('home')
-  const [quizzes, setQuizzes] = useState(loadQuizzes)
-  const [search, setSearch] = useState('')
-  const [activeQuiz, setActiveQuiz] = useState(null)
-  const [questionIndex, setQuestionIndex] = useState(0)
-  const [selected, setSelected] = useState(null)
-  const [answers, setAnswers] = useState([])
-  const [gameMode, setGameMode] = useState('classic')
-  const [secondsLeft, setSecondsLeft] = useState(0)
-  const [category, setCategory] = useState('Tümü')
-  const [editor, setEditor] = useState({ title: '', category: 'Genel kültür', questions: [{ text: '', options: ['', '', '', ''], answer: 0, seconds: 20 }] })
+  const [authMode, setAuthMode] = useState('login')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [quizzes, setQuizzes] = useState([])
+  const [title, setTitle] = useState('')
+  const [category, setCategory] = useState('Genel kültür')
+  const [questions, setQuestions] = useState([emptyQuestion()])
   const [pin, setPin] = useState('')
+  const [nickname, setNickname] = useState('')
+  const [room, setRoom] = useState(null)
+  const [participant, setParticipant] = useState(null)
+  const [snapshot, setSnapshot] = useState(null)
+  const [players, setPlayers] = useState([])
+  const [leaderboard, setLeaderboard] = useState([])
+  const [selected, setSelected] = useState(null)
+  const [answerFeedback, setAnswerFeedback] = useState(null)
+  const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState('')
-  useEffect(() => localStorage.setItem('quizup-quizzes', JSON.stringify(quizzes)), [quizzes])
-  const allQuizzes = useMemo(() => [...starter, ...quizzes], [quizzes])
-  const filtered = allQuizzes.filter(q => (category === 'Tümü' || q.category === category) && (q.title.toLocaleLowerCase('tr').includes(search.toLocaleLowerCase('tr')) || q.category.toLocaleLowerCase('tr').includes(search.toLocaleLowerCase('tr'))))
-  const categories = ['Tümü', ...new Set(allQuizzes.map(q => q.category))]
-  const go = p => { setPage(p); setNotice(''); window.scrollTo({ top: 0, behavior: 'smooth' }) }
-  const updateQuestion = (idx, key, value) => setEditor(old => ({ ...old, questions: old.questions.map((q, i) => i === idx ? { ...q, [key]: value } : q) }))
-  const updateOption = (qi, oi, value) => setEditor(old => ({ ...old, questions: old.questions.map((q, i) => i === qi ? { ...q, options: q.options.map((o, j) => j === oi ? value : o) } : q) }))
-  const publish = () => {
-    if (!editor.title.trim()) return setNotice('Yarışmana bir isim vermelisin.')
-    if (!editor.questions.length || editor.questions.some(q => !q.text.trim() || q.options.some(o => !o.trim()))) return setNotice('Her soruyu ve dört seçeneğini doldurmalısın.')
-    const quiz = { ...editor, id: crypto.randomUUID(), plays: 0, createdAt: Date.now() }
-    setQuizzes(old => [quiz, ...old]); setEditor({ title: '', category: 'Genel kültür', questions: [{ text: '', options: ['', '', '', ''], answer: 0, seconds: 20 }] })
-    setNotice('Yarışma bu tarayıcıya kaydedildi. Herkese açık yayınlama için hesap ve çevrim içi veritabanı bağlantısı sonraki aşamada eklenecek.')
-    setPage('my')
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => setSession(data.session))
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, next) => setSession(next))
+    return () => listener.subscription.unsubscribe()
+  }, [])
+
+  const loadQuizzes = async () => {
+    if (!session?.user) return
+    const { data, error } = await supabase.from('quizzes').select('id,title,category,created_at').order('created_at', { ascending: false })
+    if (error) setNotice(errText(error)); else setQuizzes(data || [])
   }
-  const startQuiz = quiz => { setActiveQuiz(quiz); setQuestionIndex(0); setAnswers([]); setSelected(null); go('modes') }
-  const launchMode = mode => { setGameMode(mode); setQuestionIndex(0); setAnswers([]); setSelected(null); setSecondsLeft(mode === 'rush' ? Math.min(activeQuiz.questions[0]?.seconds || 10, 10) : (activeQuiz.questions[0]?.seconds || 20)); setPage('play'); window.scrollTo({top:0,behavior:'smooth'}) }
-  const advance = next => { setAnswers(next); setSelected(null); if (questionIndex + 1 >= activeQuiz.questions.length) go('result'); else { const i = questionIndex + 1; setQuestionIndex(i); setSecondsLeft(gameMode === 'rush' ? Math.min(activeQuiz.questions[i]?.seconds || 10, 10) : (activeQuiz.questions[i]?.seconds || 20)) } }
-  const answerQuestion = () => {
-    if (selected === null) return
-    advance([...answers, selected])
+  useEffect(() => { loadQuizzes() }, [session?.user?.id])
+
+  const loadTeacherRoom = async (roomId) => {
+    const [snap, roster] = await Promise.all([
+      supabase.rpc('get_room_snapshot', { p_room_id: roomId, p_participant_id: null, p_session_token: null }),
+      supabase.from('room_participants').select('id,nickname,score,joined_at').eq('room_id', roomId).order('joined_at')
+    ])
+    if (snap.error) setNotice(errText(snap.error)); else setSnapshot(snap.data)
+    if (roster.error) setNotice(errText(roster.error)); else setPlayers(roster.data || [])
+    const { data: board } = await supabase.rpc('get_leaderboard', { p_room_id: roomId, p_participant_id: null, p_session_token: null })
+    if (board) setLeaderboard(board)
   }
-  const correctCount = activeQuiz ? activeQuiz.questions.reduce((n,q,i)=>n+(answers[i]===q.answer?1:0),0) : 0
-  const score = correctCount * (gameMode === 'accuracy' || gameMode === 'practice' ? 100 : 100)
-  useEffect(() => { if (page !== 'play' || gameMode === 'practice' || gameMode === 'accuracy') return; const timer = setInterval(() => setSecondsLeft(v => Math.max(0,v-1)), 1000); return () => clearInterval(timer) }, [page,questionIndex,gameMode])
-  useEffect(() => { if (page === 'play' && gameMode !== 'practice' && gameMode !== 'accuracy' && secondsLeft === 0) advance([...answers, -1]) }, [secondsLeft])
-  const NavButton = ({ icon: Icon, label, target, active }) => <button className={'nav-item ' + (active ? 'active' : '')} onClick={() => go(target)}><Icon size={18}/><span>{label}</span></button>
-  return <div className="app-shell">
-    <header className="topbar"><button className="brand" onClick={() => go('home')}><span className="brand-mark"><Zap size={21} fill="currentColor"/></span><span>quiz<span className="brand-light">up</span><i>.</i></span></button>
-      <nav className="desktop-nav"><NavButton icon={Home} label="Ana sayfa" target="home" active={page === 'home'}/><NavButton icon={Compass} label="Keşfet" target="discover" active={page === 'discover'}/><NavButton icon={Layers3} label="Yarışmalarım" target="my" active={page === 'my'}/></nav>
-      <div className="top-actions"><button className="login-btn" onClick={() => setNotice('Hesap sistemi, yarışmaların cihazlar arasında saklanmasıyla birlikte eklenecek.')}>Giriş yap</button><button className="primary small" onClick={() => go('create')}><Plus size={17}/> Oluştur</button><button className="mobile-menu" onClick={() => go('discover')}><Compass/></button></div>
+
+  const loadStudentRoom = async (r = room, p = participant) => {
+    if (!r || !p) return
+    const { data, error } = await supabase.rpc('get_room_snapshot', { p_room_id: r.id, p_participant_id: p.participant_id, p_session_token: p.session_token })
+    if (error) { setNotice(errText(error)); return }
+    setSnapshot(data)
+    const { data: board, error: boardError } = await supabase.rpc('get_leaderboard', { p_room_id: r.id, p_participant_id: p.participant_id, p_session_token: p.session_token })
+    if (!boardError && board) setLeaderboard(board)
+    if (data.status !== 'active') setAnswerFeedback(null)
+  }
+
+  useEffect(() => {
+    if (!room?.id) return
+    const channel = supabase.channel('quizup-room-' + room.id)
+      .on('broadcast', { event: 'sync' }, () => {
+        if (participant) loadStudentRoom(room, participant)
+        else loadTeacherRoom(room.id)
+      }).subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [room?.id, participant?.participant_id])
+
+  const broadcast = async () => {
+    if (!room?.id) return
+    await supabase.channel('quizup-room-' + room.id).send({ type: 'broadcast', event: 'sync', payload: { at: Date.now() } })
+  }
+
+  const signIn = async (event) => {
+    event.preventDefault(); setBusy(true); setNotice('')
+    const fn = authMode === 'signup' ? supabase.auth.signUp : supabase.auth.signInWithPassword
+    const { data, error } = await fn({ email: email.trim(), password })
+    setBusy(false)
+    if (error) return setNotice(errText(error))
+    if (authMode === 'signup' && !data.session) setNotice('Hesap oluşturuldu. E-postana gelen doğrulama bağlantısına tıkla, sonra giriş yap.')
+    else { setSession(data.session); setPage('teacher') }
+  }
+
+  const saveQuiz = async (event) => {
+    event.preventDefault()
+    if (!title.trim() || questions.some(q => !q.prompt.trim() || q.options.some(o => !o.trim()))) return setNotice('Yarışma adını, tüm soruları ve dört seçeneği doldur.')
+    setBusy(true); setNotice('')
+    const { data: quiz, error } = await supabase.from('quizzes').insert({ owner_id: session.user.id, title: title.trim(), category }).select().single()
+    if (!error) {
+      const rows = questions.map((q, position) => ({ quiz_id: quiz.id, position, prompt: q.prompt.trim(), options: q.options, correct_index: q.correct_index, seconds: q.seconds }))
+      const inserted = await supabase.from('quiz_questions').insert(rows)
+      if (inserted.error) {
+        await supabase.from('quizzes').delete().eq('id', quiz.id)
+        setNotice(errText(inserted.error))
+      } else {
+        setTitle(''); setQuestions([emptyQuestion()]); await loadQuizzes(); setPage('teacher'); setNotice('Yarışman kaydedildi. Şimdi PIN odası oluşturabilirsin.')
+      }
+    } else setNotice(errText(error))
+    setBusy(false)
+  }
+
+  const createRoom = async (quizId) => {
+    setBusy(true); setNotice('')
+    const { data, error } = await supabase.rpc('create_room', { p_quiz_id: quizId })
+    setBusy(false)
+    if (error) return setNotice(errText(error))
+    const nextRoom = { id: data.id, pin: data.pin }
+    setRoom(nextRoom); setParticipant(null); setPage('host'); await loadTeacherRoom(data.id)
+  }
+
+  const joinRoom = async (event) => {
+    event.preventDefault(); setBusy(true); setNotice('')
+    const { data, error } = await supabase.rpc('join_room', { p_pin: pin, p_nickname: nickname.trim() })
+    setBusy(false)
+    if (error) return setNotice(errText(error))
+    const nextRoom = { id: data.room_id, pin }
+    const nextParticipant = { participant_id: data.participant_id, session_token: data.session_token, nickname: data.nickname }
+    sessionStorage.setItem('quizup-participant', JSON.stringify({ room: nextRoom, participant: nextParticipant }))
+    setRoom(nextRoom); setParticipant(nextParticipant); setAnswerFeedback(null); setPage('student'); await loadStudentRoom(nextRoom, nextParticipant)
+  }
+
+  const startRoom = async () => {
+    setBusy(true)
+    const { error } = await supabase.rpc('start_room', { p_room_id: room.id })
+    setBusy(false)
+    if (error) return setNotice(errText(error))
+    await loadTeacherRoom(room.id); await broadcast()
+  }
+
+  const nextQuestion = async () => {
+    setBusy(true)
+    const { error } = await supabase.rpc('advance_room', { p_room_id: room.id })
+    setBusy(false)
+    if (error) return setNotice(errText(error))
+    await loadTeacherRoom(room.id); await broadcast()
+  }
+
+  const submitAnswer = async (index) => {
+    if (selected !== null || answerFeedback || !snapshot?.question) return
+    setSelected(index); setBusy(true)
+    const { data, error } = await supabase.rpc('submit_answer', {
+      p_room_id: room.id, p_participant_id: participant.participant_id, p_session_token: participant.session_token,
+      p_question_index: snapshot.current_question, p_selected_index: index
+    })
+    setBusy(false)
+    if (error) { setSelected(null); return setNotice(errText(error)) }
+    setAnswerFeedback(data); await loadStudentRoom()
+    await supabase.channel('quizup-room-' + room.id).send({ type: 'broadcast', event: 'sync', payload: { kind: 'answer' } })
+  }
+
+  const signOut = async () => { await supabase.auth.signOut(); setSession(null); setPage('home'); setRoom(null); setSnapshot(null) }
+  const addQuestion = () => setQuestions(q => [...q, emptyQuestion()])
+  const updateQuestion = (index, key, value) => setQuestions(old => old.map((q, i) => i === index ? { ...q, [key]: value } : q))
+  const updateOption = (qi, oi, value) => setQuestions(old => old.map((q, i) => i === qi ? { ...q, options: q.options.map((o, j) => j === oi ? value : o) } : q))
+  const topThree = leaderboard.slice(0, 3)
+  const pageTitle = useMemo(() => ({ home: 'QuizUp', teacher: 'Öğretmen paneli', create: 'Yarışma oluştur', join: 'PIN ile katıl', host: 'Canlı sınıf', student: 'Yarışma' }[page] || 'QuizUp'), [page])
+
+  return <div className="qu-app">
+    <header className="qu-header">
+      <button className="qu-brand" onClick={() => setPage(session ? 'teacher' : 'home')}><span><Zap size={19} fill="currentColor"/></span>quiz<span>up</span><i>.</i></button>
+      <div className="qu-header-right">
+        <button className="qu-quiet" onClick={() => setPage('join')}>PIN ile katıl</button>
+        {session ? <><button className="qu-quiet" onClick={() => setPage('teacher')}>Panelim</button><button className="qu-icon" onClick={signOut} title="Çıkış yap"><LogOut size={17}/></button></> : <button className="qu-primary qu-small" onClick={() => setPage('auth')}>Öğretmen girişi</button>}
+      </div>
     </header>
-    <main>
-      {page === 'home' && <><section className="hero"><div className="hero-copy"><div className="eyebrow"><Sparkles size={15}/> ÖĞRENMEK HİÇ BU KADAR EĞLENCELİ OLMAMIŞTI</div><h1>Bilgini konuştur.<br/><span>Oyuna dönüştür.</span></h1><p>Kendi bilgi yarışmanı oluştur, arkadaşlarına meydan oku ve eğlenirken öğren. QuizUp'ta sıra sende!</p><div className="hero-buttons"><button className="primary" onClick={() => go('create')}><Plus size={19}/> Yarışma oluştur</button><button className="secondary" onClick={() => go('discover')}><Compass size={18}/> Yarışmaları keşfet</button></div><div className="hero-proof"><div className="avatar-stack"><b>Q</b><b>U</b><b>!</b></div><span><strong>Hayalindeki yarışmayı oluştur</strong><br/>Ücretsiz başla, hemen oyna.</span></div></div><div className="hero-art"><div className="art-orbit orbit-one"></div><div className="art-orbit orbit-two"></div><div className="quiz-card"><div className="quiz-card-top"><span>QUIZUP CHALLENGE</span><span className="live-dot">● CANLI TASARIM</span></div><div className="mini-trophy"><Trophy size={44}/></div><h3>Hazır mısın?</h3><p>Bilgini test et ve zirveye çık!</p><div className="mini-answers"><span>🚀 Uzay</span><span>🧠 Bilim</span><span>🌍 Dünya</span><span>🎮 Oyun</span></div><div className="mini-progress"><i/></div></div><div className="float-chip chip-one"><Trophy size={17}/> <b>1. sıra</b></div><div className="float-chip chip-two"><Zap size={17} fill="currentColor"/> +950 puan</div><div className="sparkle s1">✦</div><div className="sparkle s2">✧</div></div></section>
-        <section className="feature-strip"><div><span className="feature-icon purple"><Gamepad2/></span><span><b>Oyna ve öğren</b><small>Bilgini eğlenceyle geliştir</small></span></div><div><span className="feature-icon orange"><Crown/></span><span><b>Zirveye yüksel</b><small>Puanını ve başarını gör</small></span></div><div><span className="feature-icon green"><Users/></span><span><b>Birlikte yarış</b><small>Arkadaşlarına meydan oku</small></span></div></section>
-        <section className="section"><div className="section-heading"><div><span className="eyebrow">SENİ NELER BEKLİYOR?</span><h2>QuizUp dünyasını keşfet</h2></div><button className="text-link" onClick={() => go('discover')}>Tüm yarışmalar <ArrowRight size={16}/></button></div><div className="feature-cards"><button className="feature-card card-purple" onClick={() => go('create')}><span className="big-icon"><Plus size={28}/></span><h3>Kendi yarışmanı oluştur</h3><p>Sorularını yaz, seçeneklerini belirle ve kendi bilgi oyununun sunucusu ol.</p><span className="card-link">Hemen oluştur <ArrowRight size={16}/></span></button><button className="feature-card card-orange" onClick={() => go('discover')}><span className="big-icon"><Compass size={28}/></span><h3>Yeni şeyler keşfet</h3><p>Farklı konulardaki yarışmalara göz at, kendini test et.</p><span className="card-link">Keşfetmeye başla <ArrowRight size={16}/></span></button><button className="feature-card card-green" onClick={() => go('join')}><span className="big-icon"><Users size={28}/></span><h3>PIN ile oyuna katıl</h3><p>Bir oyun kodun varsa arkadaşlarının yarışmasına katıl.</p><span className="card-link">PIN gir <ArrowRight size={16}/></span></button></div></section></>}
-      {page === 'discover' && <section className="page-section"><div className="page-heading"><div><span className="eyebrow">KEŞFET</span><h1>Bir yarışma seç, <span>başla!</span></h1><p>İlgini çeken konuyu bul ve bilgini test et.</p></div></div><div className="category-pills">{categories.map(cat => <button key={cat} className={category === cat ? 'category-pill selected' : 'category-pill'} onClick={() => setCategory(cat)}>{cat}</button>)}</div><div className="search-box"><Search size={19}/><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Yarışma veya kategori ara..."/></div><div className="quiz-grid">{filtered.map((q, i) => <QuizTile key={q.id} quiz={q} index={i} onClick={() => startQuiz(q)}/>)}{filtered.length === 0 && <div className="empty-state"><CircleHelp size={32}/><h3>Burada henüz yarışma yok</h3><p>Aramana uygun bir yarışma bulamadık.</p></div>}</div><p className="local-note"><LockKeyhole size={14}/> Şu an örnek yarışmalar ve bu cihazda oluşturduğun yarışmalar listelenir.</p></section>}
-      {page === 'my' && <section className="page-section"><div className="page-heading split"><div><span className="eyebrow">KÜTÜPHANEM</span><h1>Yarışmalarım</h1><p>Bu tarayıcıda oluşturduğun yarışmalar.</p></div><button className="primary" onClick={() => go('create')}><Plus size={18}/> Yeni yarışma</button></div>{quizzes.length ? <div className="quiz-grid">{quizzes.map((q, i) => <QuizTile key={q.id} quiz={q} index={i} onClick={() => startQuiz(q)}/>)}</div> : <div className="empty-state large"><BookOpen size={38}/><h3>Henüz yarışman yok</h3><p>İlk yarışmanı oluştur ve QuizUp maceranı başlat.</p><button className="primary" onClick={() => go('create')}><Plus size={17}/> İlk yarışmanı oluştur</button></div>}</section>}
-      {page === 'create' && <section className="page-section editor-page"><button className="back-link" onClick={() => go('home')}><ArrowLeft size={17}/> Ana sayfa</button><div className="page-heading"><span className="eyebrow">YARIŞMA STÜDYOSU</span><h1>Haydi bir şeyler <span>oluşturalım!</span></h1><p>Sorularını ekle, doğru cevapları seç ve yarışmanı hazırla.</p></div><div className="editor-layout"><div className="editor-main"><div className="panel"><div className="panel-title"><span className="step-number">1</span><div><h3>Yarışma bilgileri</h3><p>Yarışmanın temel bilgilerini belirle.</p></div></div><label className="field-label">Yarışma adı</label><input className="field" value={editor.title} onChange={e => setEditor(v => ({ ...v, title: e.target.value }))} placeholder="Örn. Eğlenceli genel kültür testi"/><label className="field-label">Kategori</label><select className="field" value={editor.category} onChange={e => setEditor(v => ({ ...v, category: e.target.value }))}>{['Genel kültür','Bilim','Tarih','Coğrafya','Matematik','Teknoloji','Oyunlar','Eğlence'].map(c => <option>{c}</option>)}</select></div>
-        {editor.questions.map((q, qi) => <div className="panel question-panel" key={qi}><div className="panel-title"><span className="step-number">{qi + 2}</span><div><h3>{qi + 1}. Soru</h3><p>Bir soru yaz ve doğru cevabı işaretle.</p></div><button className="icon-btn danger" onClick={() => setEditor(v => ({ ...v, questions: v.questions.filter((_, i) => i !== qi) }))} disabled={editor.questions.length === 1}><X size={18}/></button></div><textarea className="field question-input" value={q.text} onChange={e => updateQuestion(qi, 'text', e.target.value)} placeholder="Sorunu buraya yaz..."/><div className="option-grid">{q.options.map((o, oi) => <label className={'option-input option-' + oi} key={oi}><span>{String.fromCharCode(65 + oi)}</span><input value={o} onChange={e => updateOption(qi, oi, e.target.value)} placeholder={'Seçenek ' + (oi + 1)}/><button type="button" title="Doğru cevap olarak işaretle" className={q.answer === oi ? 'correct-check selected' : 'correct-check'} onClick={() => updateQuestion(qi, 'answer', oi)}>{q.answer === oi ? <Check size={15}/> : <span/>}</button></label>)}</div><div className="timer-row"><Clock3 size={16}/><span>Soru süresi</span><select value={q.seconds} onChange={e => updateQuestion(qi, 'seconds', Number(e.target.value))}><option value="10">10 saniye</option><option value="15">15 saniye</option><option value="20">20 saniye</option><option value="30">30 saniye</option><option value="60">60 saniye</option></select></div></div>)}<button className="add-question" onClick={() => setEditor(v => ({ ...v, questions: [...v.questions, { text: '', options: ['', '', '', ''], answer: 0, seconds: 20 }] }))}><Plus size={18}/> Soru ekle</button></div><aside className="editor-aside"><div className="tip-card"><Sparkles size={21}/><h3>Küçük bir ipucu</h3><p>Sorularını kısa ve anlaşılır tut. Doğru cevabı seçeneklerin yanındaki daireye dokunarak seçebilirsin.</p></div><div className="save-card"><h3>Yarışman hazır mı?</h3><p>{editor.questions.length} soru ekledin. Dilediğin zaman düzenleyebilirsin.</p><button className="primary full" onClick={publish}>Kaydet <ArrowRight size={17}/></button><small><LockKeyhole size={13}/> Şimdilik yalnızca bu tarayıcıya kaydedilir.</small></div></aside></div></section>}
-      {page === 'join' && <section className="join-wrap"><div className="join-card"><div className="join-icon"><Gamepad2 size={32}/></div><span className="eyebrow">OYUNA KATIL</span><h1>PIN kodunu gir!</h1><p>Bir yarışma sunucusundan aldığın oyun kodunu buraya yaz.</p><input className="pin-input" value={pin} onChange={e => setPin(e.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="000 000" inputMode="numeric" maxLength={6}/><button className="primary full" onClick={() => setNotice('Canlı oda sistemi henüz sunucuya bağlanmadı. PIN ile gerçek zamanlı oyun için sonraki aşamada ortak veritabanı ve canlı bağlantı kurulacak.')}>Oyuna katıl <ArrowRight size={18}/></button><small>Canlı çok oyunculu oyun altyapısı sonraki aşamada etkinleştirilecek.</small></div></section>}
-      {page === 'modes' && activeQuiz && <section className="page-section modes-page"><button className="back-link" onClick={() => go('discover')}><ArrowLeft size={17}/> Yarışmalara dön</button><div className="page-heading"><span className="eyebrow">OYUN MODU SEÇ</span><h1>Nasıl <span>oynamak</span> istersin?</h1><p>{activeQuiz.title} · {activeQuiz.questions.length} soru</p></div><div className="mode-grid"><button className="mode-card mode-classic" onClick={() => launchMode('classic')}><span>🏆</span><h3>Klasik</h3><p>Doğru cevapla, hızlı davran ve puanını yükselt.</p><b>Oynamaya başla <ArrowRight size={16}/></b></button><button className="mode-card mode-accuracy" onClick={() => launchMode('accuracy')}><span>🎯</span><h3>Doğruluk</h3><p>Hıza takılma; önemli olan doğru cevap vermek.</p><b>Oynamaya başla <ArrowRight size={16}/></b></button><button className="mode-card mode-rush" onClick={() => launchMode('rush')}><span>⚡</span><h3>Süreye Karşı</h3><p>Her soruda en fazla 10 saniyen var. Hazır mısın?</p><b>Oynamaya başla <ArrowRight size={16}/></b></button><button className="mode-card mode-practice" onClick={() => launchMode('practice')}><span>📚</span><h3>Pratik</h3><p>Süre baskısı olmadan rahatça öğren ve dene.</p><b>Oynamaya başla <ArrowRight size={16}/></b></button></div><div className="mode-note"><Users size={16}/> Takım ve canlı oda modu, çok oyunculu sunucu bağlantısı tamamlandığında açılacak.</div></section>}
-      {page === 'play' && activeQuiz && <section className="play-wrap"><div className="play-top"><button className="back-link" onClick={() => go('discover')}><X size={18}/> Çık</button><span>{activeQuiz.title}</span><span className="question-count">{questionIndex + 1} / {activeQuiz.questions.length}</span></div><div className="play-progress"><i style={{ width: ((questionIndex + 1) / activeQuiz.questions.length * 100) + '%' }}/></div><div className="game-status"><span>{({classic:'🏆 Klasik',accuracy:'🎯 Doğruluk',rush:'⚡ Süreye Karşı',practice:'📚 Pratik'})[gameMode]}</span>{gameMode !== 'practice' && gameMode !== 'accuracy' && <strong className={secondsLeft <= 5 ? 'urgent' : ''}><Clock3 size={16}/> {secondsLeft} sn</strong>}</div><div className="play-card"><span className="eyebrow">SORU {questionIndex + 1}</span><h1>{activeQuiz.questions[questionIndex].text}</h1><div className="play-options">{activeQuiz.questions[questionIndex].options.map((o, i) => <button key={i} className={'play-option p' + i + (selected === i ? ' chosen' : '')} onClick={() => setSelected(i)}><b>{String.fromCharCode(65 + i)}</b>{o}{selected === i && <Check size={19}/>}</button>)}</div><button className="primary next-btn" disabled={selected === null} onClick={answerQuestion}>{questionIndex + 1 === activeQuiz.questions.length ? 'Sonucu gör' : 'Sonraki soru'} <ArrowRight size={18}/></button></div></section>}
-      {page === 'result' && activeQuiz && <section className="join-wrap result-wrap"><div className="result-card result-wide"><div className="result-trophy"><Trophy size={40}/></div><span className="eyebrow">YARIŞMA TAMAMLANDI · {({classic:'KLASİK',accuracy:'DOĞRULUK',rush:'SÜREYE KARŞI',practice:'PRATİK'})[gameMode]}</span><h1>{correctCount === activeQuiz.questions.length ? 'Mükemmel performans!' : 'Harika iş çıkardın!'}</h1><div className="score-number">{correctCount}<small> / {activeQuiz.questions.length}</small></div><p>{activeQuiz.questions.length ? Math.round(correctCount / activeQuiz.questions.length * 100) : 0}% doğru cevap · {score} puan</p><div className="podium"><div className="podium-place second"><span>🥈</span><b>2.</b><small>—</small></div><div className="podium-place first"><span>👑</span><b>1.</b><small>Sen</small></div><div className="podium-place third"><span>🥉</span><b>3.</b><small>—</small></div></div><div className="result-caption">Bu turdaki kişisel podyumun</div><div className="result-actions"><button className="primary" onClick={() => startQuiz(activeQuiz)}>Tekrar oyna</button><button className="secondary" onClick={() => go('discover')}>Diğer yarışmalar</button></div></div></section>}
+    <main className="qu-main">
+      {page === 'home' && <section className="qu-hero">
+        <div><span className="qu-eyebrow"><GraduationCap size={16}/> ÖĞRETMENLER VE ÖĞRENCİLER İÇİN</span><h1>Dersi yarışmaya<br/><em>dönüştür.</em></h1><p>Öğretmen yarışmayı oluşturur, sınıf PIN ile katılır. Herkes aynı soruyu aynı anda görür; hız ve doğruluk puan kazandırır.</p><div className="qu-actions"><button className="qu-primary" onClick={() => setPage('auth')}>Öğretmen olarak başla <ArrowRight size={17}/></button><button className="qu-secondary" onClick={() => setPage('join')}>PIN ile katıl</button></div></div>
+        <div className="qu-hero-card"><div className="qu-live"><span/> CANLI SINIF SİSTEMİ</div><div className="qu-hero-trophy"><Trophy size={54}/></div><h2>Bilgi. Hız. Zirve.</h2><p>Gerçek sınıf sıralaması</p><div className="qu-mini-podium"><b>🥈 2.</b><strong>👑 1.</strong><b>🥉 3.</b></div></div>
+      </section>}
+      {page === 'auth' && <section className="qu-center"><form className="qu-panel qu-auth" onSubmit={signIn}><span className="qu-eyebrow"><GraduationCap size={16}/> ÖĞRETMEN HESABI</span><h1>{authMode === 'login' ? 'Tekrar hoş geldin!' : 'Öğretmen hesabı oluştur'}</h1><p>Yarışmaların ve sınıfların sana özel saklanır.</p><label>E-posta<input type="email" required value={email} onChange={e => setEmail(e.target.value)} placeholder="ornek@okul.com"/></label><label>Şifre<input type="password" required minLength={6} value={password} onChange={e => setPassword(e.target.value)} placeholder="En az 6 karakter"/></label><button className="qu-primary qu-full" disabled={busy}>{busy ? 'Bekle...' : authMode === 'login' ? 'Giriş yap' : 'Hesap oluştur'} <ArrowRight size={17}/></button><button type="button" className="qu-text-btn" onClick={() => setAuthMode(authMode === 'login' ? 'signup' : 'login')}>{authMode === 'login' ? 'İlk kez mi geliyorsun? Hesap oluştur' : 'Zaten hesabın var mı? Giriş yap'}</button></form></section>}
+      {page === 'teacher' && <section className="qu-section"><div className="qu-heading"><div><span className="qu-eyebrow">ÖĞRETMEN ALANI</span><h1>Yarışmaların</h1><p>Yarışmanı seç, sınıfına özel PIN oluştur.</p></div><button className="qu-primary" onClick={() => setPage('create')}><Plus size={17}/> Yarışma oluştur</button></div>{quizzes.length ? <div className="qu-quiz-grid">{quizzes.map(q => <article className="qu-quiz-card" key={q.id}><span className="qu-card-icon"><BookOpen size={23}/></span><small>{q.category}</small><h3>{q.title}</h3><button className="qu-primary qu-full" disabled={busy} onClick={() => createRoom(q.id)}><Radio size={16}/> PIN odası oluştur</button></article>)}</div> : <div className="qu-empty"><BookOpen size={34}/><h3>Henüz yarışman yok</h3><p>İlk yarışmanı oluştur; öğrencilerin PIN ile katılsın.</p><button className="qu-primary" onClick={() => setPage('create')}>İlk yarışmanı oluştur</button></div>}</section>}
+      {page === 'create' && <section className="qu-section"><button className="qu-back" onClick={() => setPage('teacher')}>← Öğretmen paneli</button><div className="qu-heading"><div><span className="qu-eyebrow">YARIŞMA STÜDYOSU</span><h1>Yeni yarışma</h1><p>Sorularını ekle ve sınıfına hazırla.</p></div></div><form className="qu-create-layout" onSubmit={saveQuiz}><div className="qu-form-col"><div className="qu-panel"><label>Yarışma adı<input required maxLength={100} value={title} onChange={e => setTitle(e.target.value)} placeholder="Örn. 7. sınıf fen bilimleri"/></label><label>Kategori<select value={category} onChange={e => setCategory(e.target.value)}>{['Genel kültür','Bilim','Tarih','Coğrafya','Matematik','Teknoloji','Oyunlar','Spor','Eğlence','Doğa','Dil ve edebiyat'].map(c => <option key={c}>{c}</option>)}</select></label></div>{questions.map((q, qi) => <div className="qu-panel" key={qi}><div className="qu-question-head"><b>{qi + 1}. Soru</b><button type="button" className="qu-icon" disabled={questions.length === 1} onClick={() => setQuestions(old => old.filter((_, i) => i !== qi))}><X size={17}/></button></div><label>Soru metni<textarea required value={q.prompt} onChange={e => updateQuestion(qi, 'prompt', e.target.value)} placeholder="Sorunu yaz..."/></label><div className="qu-options">{q.options.map((o, oi) => <label className="qu-option" key={oi}><span>{String.fromCharCode(65 + oi)}</span><input required value={o} onChange={e => updateOption(qi, oi, e.target.value)} placeholder={'Seçenek ' + (oi + 1)}/><button type="button" className={q.correct_index === oi ? 'qu-correct selected' : 'qu-correct'} onClick={() => updateQuestion(qi, 'correct_index', oi)} title="Doğru cevap">{q.correct_index === oi ? <Check size={15}/> : null}</button></label>)}</div><label className="qu-inline-label">Soru süresi<select value={q.seconds} onChange={e => updateQuestion(qi, 'seconds', Number(e.target.value))}>{[10,15,20,30,45,60,90].map(s => <option key={s} value={s}>{s} saniye</option>)}</select></label></div>)}<button type="button" className="qu-add" onClick={addQuestion}><Plus size={17}/> Soru ekle</button></div><aside className="qu-panel qu-save"><h3>Yarışman hazır mı?</h3><p>{questions.length} soru eklendi. Doğru cevapları yeşil işaretle.</p><button className="qu-primary qu-full" disabled={busy}>{busy ? 'Kaydediliyor...' : 'Yarışmayı kaydet'} <ArrowRight size={17}/></button></aside></form></section>}
+      {page === 'join' && <section className="qu-center"><form className="qu-panel qu-auth" onSubmit={joinRoom}><span className="qu-eyebrow"><Users size={16}/> ÖĞRENCİ GİRİŞİ</span><h1>PIN kodunu gir!</h1><p>Öğretmeninin paylaştığı 6 haneli kodla sınıfa katıl.</p><label>6 haneli PIN<input required inputMode="numeric" maxLength={6} value={pin} onChange={e => setPin(e.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="000000"/></label><label>Takma ad<input required maxLength={24} value={nickname} onChange={e => setNickname(e.target.value)} placeholder="Sınıfta görünecek adın"/></label><button className="qu-primary qu-full" disabled={busy || pin.length !== 6}>{busy ? 'Katılınıyor...' : 'Sınıfa katıl'} <ArrowRight size={17}/></button></form></section>}
+      {page === 'host' && room && <section className="qu-section"><div className="qu-heading"><div><span className="qu-eyebrow"><Radio size={15}/> ÖĞRETMEN KONTROLÜ</span><h1>Canlı sınıfın</h1><p>Öğrenciler bu PIN ile katılır.</p></div><span className="qu-status">{snapshot?.status === 'active' ? '● CANLI' : snapshot?.status === 'finished' ? 'TAMAMLANDI' : 'KATILIM BEKLENİYOR'}</span></div><div className="qu-live-layout"><div className="qu-panel qu-room-main"><div className="qu-pin-label">SINIF PIN KODU</div><div className="qu-big-pin">{room.pin}</div><p className="qu-muted">PIN'i öğrencilerinle paylaş.</p>{snapshot?.status === 'waiting' && <><h2>Katılan öğrenciler</h2><div className="qu-roster">{players.map(p => <span key={p.id}><Users size={15}/>{p.nickname}</span>)}{!players.length && <small>Henüz kimse katılmadı...</small>}</div><button className="qu-primary qu-full" disabled={!players.length || busy} onClick={startRoom}>Yarışmayı başlat <ArrowRight size={17}/></button></>}{snapshot?.status === 'active' && <><div className="qu-question-live"><small>SORU {snapshot.current_question + 1} / {snapshot.question?.total}</small><h2>{snapshot.question?.prompt}</h2><div className="qu-live-options">{snapshot.question?.options?.map((o,i) => <div key={i}>{String.fromCharCode(65+i)} · {o}</div>)}</div></div><button className="qu-primary qu-full" onClick={nextQuestion}>{snapshot.current_question + 1 >= snapshot.question?.total ? 'Yarışmayı bitir' : 'Sonraki soruya geç'} <ArrowRight size={17}/></button></>}{snapshot?.status === 'finished' && <div className="qu-finished"><Trophy size={35}/><h2>Yarışma tamamlandı!</h2><p>İşte sınıfının gerçek sıralaması.</p></div>}</div><Leaderboard rows={leaderboard}/></div></section>}
+      {page === 'student' && room && participant && <section className="qu-section"><div className="qu-heading"><div><span className="qu-eyebrow">SINIF PIN · {room.pin}</span><h1>Merhaba, {participant.nickname}!</h1><p>{snapshot?.title || 'Öğretmeninin yarışması'}</p></div><span className="qu-status">{snapshot?.status === 'active' ? '● CANLI' : snapshot?.status === 'finished' ? 'TAMAMLANDI' : 'ÖĞRETMEN BEKLENİYOR'}</span></div>{snapshot?.status === 'waiting' && <div className="qu-panel qu-wait"><div className="qu-wait-icon">🎮</div><h2>Hazır ol!</h2><p>Öğretmenin yarışmayı başlattığında ilk soru burada görünecek.</p><div className="qu-wait-pin">{room.pin}</div></div>}{snapshot?.status === 'active' && <div className="qu-student-layout"><div className="qu-panel qu-student-question"><div className="qu-question-progress">SORU {snapshot.current_question + 1} / {snapshot.question?.total}</div><h2>{snapshot.question?.prompt}</h2><div className="qu-student-options">{snapshot.question?.options?.map((o,i) => <button key={i} disabled={selected !== null || !!answerFeedback || busy} className={selected === i ? 'chosen' : ''} onClick={() => submitAnswer(i)}><b>{String.fromCharCode(65+i)}</b>{o}</button>)}</div>{answerFeedback && <div className={answerFeedback.correct ? 'qu-feedback good' : 'qu-feedback bad'}>{answerFeedback.correct ? '✓ Doğru cevap!' : 'Bu kez olmadı.'} <b>+{answerFeedback.points} puan</b><small>Öğretmenin sonraki soruya geçmesini bekle.</small></div>}</div><Leaderboard rows={leaderboard}/></div>}{snapshot?.status === 'finished' && <div className="qu-panel qu-student-finish"><Trophy size={42}/><h2>Yarışma bitti!</h2><p>Toplam puanın: {leaderboard.find(x => x.nickname === participant.nickname)?.score || 0}</p><Leaderboard rows={leaderboard}/></div>}</section>}
     </main>
-    <footer><button className="brand footer-brand" onClick={() => go('home')}><span className="brand-mark"><Zap size={18} fill="currentColor"/></span><span>quiz<span className="brand-light">up</span><i>.</i></span></button><span>Bilgini konuştur. Oyuna dönüştür.</span><span>© 2026 QuizUp</span></footer>
-    {notice && <div className="toast"><span>{notice}</span><button onClick={() => setNotice('')}><X size={17}/></button></div>}
+    {notice && <div className="qu-toast" role="status">{notice}<button onClick={() => setNotice('')}><X size={16}/></button></div>}
+    <footer className="qu-footer"><b>quizup.</b><span>{pageTitle} · Öğretmen oluşturur, sınıf birlikte yarışır.</span></footer>
   </div>
 }
 
-function QuizTile({ quiz, index, onClick }) {
-  return <button className="quiz-tile" onClick={onClick}><div className="tile-art" style={{ background: ['linear-gradient(135deg,#7861f8,#a994ff)','linear-gradient(135deg,#18a999,#65d6b5)','linear-gradient(135deg,#ffad42,#ffd17c)','linear-gradient(135deg,#ec6685,#ff9db1)'][index % 4] }}><span className="tile-symbol">{['🧠','🌍','🚀','🎮'][index % 4]}</span><span className="tile-tag">{quiz.category}</span></div><div className="tile-info"><h3>{quiz.title}</h3><div><span><CircleHelp size={14}/> {quiz.questions.length} soru</span><span><Trophy size={14}/> QuizUp</span></div></div><span className="tile-arrow"><ArrowRight size={18}/></span></button>
+function Leaderboard({ rows = [] }) {
+  return <aside className="qu-panel qu-leaderboard"><div className="qu-board-title"><Trophy size={19}/><h3>Sınıf sıralaması</h3></div>{rows.length ? <><div className="qu-top-three">{rows.slice(0,3).map((r,i) => <div className={'qu-podium p' + i} key={r.nickname}><span>{medal[i]}</span><b>{r.nickname}</b><strong>{r.score}</strong><small>{i + 1}. sıra</small></div>)}</div><ol>{rows.map((r,i) => <li key={r.nickname}><span>{i+1}</span><b>{r.nickname}</b><strong>{r.score.toLocaleString('tr-TR')} puan</strong></li>)}</ol></> : <div className="qu-board-empty"><Users size={23}/><p>Öğrenciler katıldıkça sıralama burada oluşacak.</p></div>}</aside>
 }
