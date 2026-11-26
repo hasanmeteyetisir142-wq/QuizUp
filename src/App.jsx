@@ -1,58 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ArrowLeft, ArrowRight, BookOpen, Check, ChevronDown, CircleHelp, Clock3, Compass, Crown, Gamepad2, GraduationCap, Home, Layers3, LockKeyhole, Plus, Search, Share2, Sparkles, Trophy, Users, X, Zap } from 'lucide-react'
 
-const starter = [
-  { id:'demo-1', title:'Genel Kültür: Büyük Meydan Okuma', category:'Genel kültür', questions:[
-    {text:'Dünyanın en büyük okyanusu hangisidir?',options:['Atlas','Hint','Pasifik','Arktik'],answer:2,seconds:20},
-    {text:'Bir yılda kaç ay vardır?',options:['10','11','12','13'],answer:2,seconds:15},
-    {text:'Güneş sisteminin en büyük gezegeni hangisidir?',options:['Dünya','Jüpiter','Mars','Venüs'],answer:1,seconds:20},
-    {text:'Japonya’nın başkenti neresidir?',options:['Seul','Pekin','Tokyo','Bangkok'],answer:2,seconds:20}
-  ],plays:128,createdAt:Date.now()},
-  { id:'demo-2', title:'Bilim Dünyası', category:'Bilim', questions:[
-    {text:'Suyun kimyasal formülü nedir?',options:['CO2','H2O','O2','NaCl'],answer:1,seconds:15},
-    {text:'İnsan vücudundaki en büyük organ hangisidir?',options:['Kalp','Karaciğer','Deri','Akciğer'],answer:2,seconds:20},
-    {text:'Işık yılı neyi ölçer?',options:['Zamanı','Mesafeyi','Hızı','Enerjiyi'],answer:1,seconds:20}
-  ],plays:95,createdAt:Date.now()},
-  { id:'demo-3', title:'Tarihte Yolculuk', category:'Tarih', questions:[
-    {text:'İstanbul hangi yıl fethedildi?',options:['1071','1299','1453','1923'],answer:2,seconds:20},
-    {text:'Türkiye Cumhuriyeti hangi yıl ilan edildi?',options:['1919','1920','1922','1923'],answer:3,seconds:15},
-    {text:'Piramitleriyle ünlü antik uygarlık hangisidir?',options:['Roma','Mısır','Maya','Pers'],answer:1,seconds:20}
-  ],plays:76,createdAt:Date.now()},
-  { id:'demo-4', title:'Dünya Coğrafyası', category:'Coğrafya', questions:[
-    {text:'Dünyanın en yüksek dağı hangisidir?',options:['K2','Everest','Kilimanjaro','Ağrı'],answer:1,seconds:20},
-    {text:'Türkiye kaç coğrafi bölgeye ayrılır?',options:['5','6','7','8'],answer:2,seconds:15},
-    {text:'Nil Nehri hangi kıtadadır?',options:['Asya','Avrupa','Afrika','Amerika'],answer:2,seconds:20}
-  ],plays:64,createdAt:Date.now()},
-  { id:'demo-5', title:'Matematik Hız Testi', category:'Matematik', questions:[
-    {text:'12 × 8 kaç eder?',options:['86','92','96','108'],answer:2,seconds:10},
-    {text:'144 sayısının karekökü kaçtır?',options:['10','11','12','14'],answer:2,seconds:15},
-    {text:'Bir üçgenin iç açıları toplamı kaç derecedir?',options:['90','180','270','360'],answer:1,seconds:15}
-  ],plays:53,createdAt:Date.now()},
-  { id:'demo-6', title:'Teknoloji ve İnternet', category:'Teknoloji', questions:[
-    {text:'HTML ne için kullanılır?',options:['Web sayfası yapısı','Veritabanı','İşletim sistemi','Ekran kartı'],answer:0,seconds:20},
-    {text:'CPU bilgisayarda neyi ifade eder?',options:['Bellek','İşlemci','Depolama','Ekran'],answer:1,seconds:15},
-    {text:'İkili sayı sisteminde hangi rakamlar kullanılır?',options:['0 ve 1','1 ve 2','0-9','A ve B'],answer:0,seconds:15}
-  ],plays:88,createdAt:Date.now()},
-  { id:'demo-7', title:'Oyun Dünyası', category:'Oyunlar', questions:[
-    {text:'Minecraft hangi tür bir oyundur?',options:['Yarış','Sandbox','Futbol','Dövüş'],answer:1,seconds:15},
-    {text:'Satrançta her oyuncu oyuna kaç taşla başlar?',options:['12','14','16','18'],answer:2,seconds:20},
-    {text:'Pac-Man neyi yemeye çalışır?',options:['Yıldızları','Noktaları','Meyveleri','Anahtarları'],answer:1,seconds:15}
-  ],plays:142,createdAt:Date.now()},
-  { id:'demo-8', title:'Spor Arenası', category:'Spor', questions:[
-    {text:'Bir futbol takımı sahada kaç oyuncuyla oynar?',options:['9','10','11','12'],answer:2,seconds:15},
-    {text:'Olimpiyat halkaları kaç tanedir?',options:['4','5','6','7'],answer:1,seconds:15},
-    {text:'Basketbolda serbest atış kaç puandır?',options:['1','2','3','4'],answer:0,seconds:15}
-  ],plays:91,createdAt:Date.now()},
-  { id:'demo-9', title:'Film ve Eğlence', category:'Eğlence', questions:[
-    {text:'Oscar ödülleri hangi alanla tanınır?',options:['Sinema','Bilim','Spor','Müzik'],answer:0,seconds:15},
-    {text:'Bir filmde hikâyeyi yöneten kişiye ne denir?',options:['Editör','Yönetmen','Sunucu','Besteci'],answer:1,seconds:15}
-  ],plays:69,createdAt:Date.now()},
-  { id:'demo-10', title:'Doğa ve Hayvanlar', category:'Doğa', questions:[
-    {text:'En hızlı kara hayvanı hangisidir?',options:['Aslan','Çita','At','Kurt'],answer:1,seconds:15},
-    {text:'Arılar hangi besini üretir?',options:['Süt','Bal','Peynir','Nektar'],answer:1,seconds:15},
-    {text:'Bitkiler fotosentez sırasında hangi gazı alır?',options:['Oksijen','Azot','Karbondioksit','Hidrojen'],answer:2,seconds:20}
-  ],plays:47,createdAt:Date.now()}
-]
+const starter = []
 const colors = ['#7357f6', '#18a999', '#ffad42', '#ed6684']
 const loadQuizzes = () => { try { return JSON.parse(localStorage.getItem('quizup-quizzes') || '[]') } catch { return [] } }
 
